@@ -30,19 +30,17 @@ def flat_accuracy(preds, labels):
 
 
 def _get_train_data_loader(batch_size, train_dir, is_distributed):
-    logger.info("Get train data loader")
-    ## Get the Training dataset from the CSV file, use train_dir as parameter
-    dataset = <insert your code here>
+    dataset = pd.read_csv(os.path.join(train_dir,'train.csv'))
     
     ## get the sentences and the labels
-    sentences = <insert your code here>
-    labels = <insert your code here>
+    sentences = dataset.sentence.values
+    labels = dataset.label.values
     
     ## use the tokenizer transform to encode each sentence, use add_special_tokens=True
     ## https://huggingface.co/transformers/model_doc/bert.html
     input_ids = []
     for sent in sentences:
-        encoded_sent = <add your code here>
+        encoded_sent = tokenizer.encode(sent, add_special_tokens=True)
         input_ids.append(encoded_sent)
 
     # pad shorter sentences
@@ -62,9 +60,9 @@ def _get_train_data_loader(batch_size, train_dir, is_distributed):
 
     # convert to PyTorch data types.
     ## Add the input_ids, labels and mask as torch tensors
-    train_inputs = <insert your code here>
-    train_labels = <insert your code here>
-    train_masks = <insert your code here>
+    train_inputs = torch.tensor(input_ids)
+    train_labels = torch.tensor(labels)
+    train_masks = torch.tensor(attention_masks)
 
     train_data = TensorDataset(train_inputs, train_masks, train_labels)
     if is_distributed:
@@ -76,8 +74,8 @@ def _get_train_data_loader(batch_size, train_dir, is_distributed):
     return train_dataloader
 
 
-def _get_test_data_loader(test_batch_size, training_dir):
-    dataset = pd.read_csv(os.path.join(training_dir, "test.csv"))
+def _get_test_data_loader(test_batch_size, test_dir):
+    dataset = pd.read_csv(os.path.join(test_dir,'test.csv'))
     sentences = dataset.sentence.values
     labels = dataset.label.values
 
@@ -103,9 +101,9 @@ def _get_test_data_loader(test_batch_size, training_dir):
 
     # convert to PyTorch data types.
     ## Add the input_ids, labels and mask as torch tensors
-    train_inputs = <insert your code here>
-    train_labels = <insert your code here>
-    train_masks = <insert your code here>
+    train_inputs = torch.tensor(input_ids)
+    train_labels = torch.tensor(labels)
+    train_masks = torch.tensor(attention_masks)
 
     train_data = TensorDataset(train_inputs, train_masks, train_labels)
     train_sampler = RandomSampler(train_data)
@@ -115,6 +113,8 @@ def _get_test_data_loader(test_batch_size, training_dir):
 
 
 def train(args):
+    print('args',args)
+#     return
     is_distributed = len(args.hosts) > 1 and args.backend is not None
     logger.debug("Distributed training - %s", is_distributed)
     use_cuda = args.num_gpus > 0
@@ -142,8 +142,8 @@ def train(args):
         
     ## Call both train and test loader
 
-    train_loader = <insert your code here>
-    test_loader = <insert your code here>
+    train_loader = _get_train_data_loader(args.batch_size, args.train, is_distributed)
+    test_loader = _get_test_data_loader(args.test_batch_size, args.test)
 
     logger.debug(
         "Processes {}/{} ({:.0f}%) of train data".format(
@@ -176,10 +176,11 @@ def train(args):
     else:
         # single-machine multi-gpu case or single-machine or multi-machine cpu case
         model = torch.nn.DataParallel(model)
+    print("model parameters: ",model.parameters() )
     optimizer = AdamW(
         model.parameters(),
         lr=2e-5,  # args.learning_rate - default is 5e-5, our notebook had 2e-5
-        eps=1e-8,  # args.adam_epsilon - default is 1e-8.
+        eps=2e-5,  # args.adam_epsilon - default is 1e-8.
     )
 
     logger.info("End of defining BertForSequenceClassification\n")
@@ -309,7 +310,8 @@ def predict_fn(input_data, model):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
+    
+    print(parser)
     # Data and model checkpoints directories
     parser.add_argument(
         "--num_labels", type=int, default=2, metavar="N", help="input batch size for training (default: 64)"
@@ -339,12 +341,20 @@ if __name__ == "__main__":
         help="backend for distributed training (tcp, gloo on cpu and gloo, nccl on gpu)",
     )
 
-    # Container environment
-    parser.add_argument("--hosts", type=str, default=json.loads(os.environ["SM_HOSTS"])) # you can comment this line out when running locally
-    parser.add_argument("--current-host", type=str, default=os.environ["SM_CURRENT_HOST"])
-    parser.add_argument("--model-dir", type=str, default=os.environ["SM_MODEL_DIR"])
-    parser.add_argument("--data-dir", type=str, default=os.environ["SM_CHANNEL_TRAIN"])
-    parser.add_argument("--test", type=str, default=os.environ["SM_CHANNEL_TEST"])
-    parser.add_argument("--num-gpus", type=int, default=os.environ["SM_NUM_GPUS"])
+    # Container environment or local mode
+    if(os.environ.get("SM_HOSTS")  is None): 
+        parser.add_argument("--hosts", type=str, default=['dummy']) 
+    else:
+        parser.add_argument("--hosts", type=str, default=json.loads(os.environ.get("SM_HOSTS"))) # Required for Sagemaker API; 
+    
+    # Local environment
+    #parser.add_argument("--hosts", type=str, default=["SM_CURRENT_HOST"]) # Required when running locally; comment out when running with Sagemaker API
+   
+
+    parser.add_argument("--current-host", type=str, default=os.environ.get("SM_CURRENT_HOST"))
+    parser.add_argument("--model-dir", type=str, default=os.environ.get("SM_MODEL_DIR"))
+    parser.add_argument("--train", type=str, default=os.environ.get("SM_CHANNEL_TRAIN"))
+    parser.add_argument("--test", type=str, default=os.environ.get("SM_CHANNEL_TEST"))
+    parser.add_argument("--num-gpus", type=int, default=os.environ.get("SM_NUM_GPUS"))
 
     train(parser.parse_args())
