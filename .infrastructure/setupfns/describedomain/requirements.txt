@@ -1,1 +1,0 @@
-# Nothing extra required beyond cfnresponse from the common layer
